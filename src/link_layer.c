@@ -5,9 +5,10 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-volatile int STOP = FALSE;
+volatile int stop = FALSE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+LinkLayerStateMachine state = START;
 
 ////////////////////////////////////////////////
 // ALARM HANDLER
@@ -78,31 +79,103 @@ int llopen(LinkLayer connectionParameters)
     switch (connectionParameters.role)
     {
     case LlRx:
-        /* code */
-        break;
-    case LlTx:
-        (void) signal(SIGALRM, alarmHandler);
-        STOP = FALSE;
-
-        while(alarmCount < connectionParameters.nRetransmissions && STOP == FALSE && alarmEnabled == FALSE)
+        while(state != STOP) 
         {
-        
-            alarm(connectionParameters.timeout);
             if (read(fd, &byte, 1) > 0) {
-                switch (/* expression */)
+                switch (state)
                 {
-                case /* constant-expression */:
-                    /* code */
+                case START:
+                    if (byte == FLAG)
+                        state = FLAG_RCV;
                     break;
-                
+                case FLAG_RCV:
+                    if (byte == ASR)
+                        state = A_RCV;
+                    else if (byte != FLAG)
+                        state = START;
+                    break;
+                case A_RCV:
+                    if (byte == CSET)
+                        state = C_RCV;
+                    else if (byte == FLAG)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case C_RCV:
+                    if (byte == (ASR ^ CSET))
+                        state = BCC_OK;
+                    else if (byte == FLAG)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case BCC_OK:
+                    if (byte == FLAG)
+                        state = STOP;
+                    else
+                        state = START;
+                    break;
                 default:
                     break;
                 }
             }
         }
         break;
-    
-    default:
+    case LlTx:
+        (void) signal(SIGALRM, alarmHandler);
+        stop = FALSE;
+
+        while(alarmCount < connectionParameters.nRetransmissions && STOP == FALSE && alarmEnabled == FALSE)
+        {
+        
+            alarm(connectionParameters.timeout);
+            if (read(fd, &byte, 1) > 0) {
+                switch (state)
+                {
+                case START:
+                    if (byte == FLAG)
+                        state = FLAG_RCV;
+                    break;
+                case FLAG_RCV:
+                    if (byte == ARS)
+                        state = A_RCV;
+                    else if (byte != FLAG)
+                        state = START;
+                    break;
+                case A_RCV:
+                    if (byte == CUA)
+                        state = C_RCV;
+                    else if (byte == FLAG)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case C_RCV:
+                    if (byte == (ARS ^ CUA))
+                        state = BCC_OK;
+                    else if (byte == FLAG)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case BCC_OK:
+                    if (byte == FLAG)
+                        state = STOP;
+                    else
+                        state = START;
+                    break;
+                default:
+                    break;
+                }
+            }
+            connectionParameters.nRetransmissions--;
+        }
+        if (state != STOP)
+        {
+            printf("Connection failed\n");
+            return -1;
+        }
         break;
     }
 
@@ -112,9 +185,15 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-int llwrite(const unsigned char *buf, int bufSize)
+int llwrite(int fd, const unsigned char *buf, int bufSize)
 {
-    // TODO
+    unsigned char data[bufSize + 1];
+
+    data[0] = FLAG;
+    data[1] = ASR;
+    data[2] = CSET;
+    data[3] = (ASR ^ CSET);
+    data[4] = FLAG;
 
     return 0;
 }
