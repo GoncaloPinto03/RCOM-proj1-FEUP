@@ -14,4 +14,25 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     lLayer.timeout = timeout;
 
     int fd = llopen(lLayer);
+
+    if (fd < 0)
+    {
+        printf("Error opening serial port\n");
+        exit(-1);
+    }
+
+    
+    if (lLayer.role == LlTx) {
+
+    }
+    else if (lLayer.role == LlRx) {
+
+    }
+    else {
+        printf("Invalid role\n");
+        exit(-1);
+    }
+
+
+
 }

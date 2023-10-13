@@ -8,7 +8,6 @@
 volatile int stop = FALSE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
-LinkLayerStateMachine state = START;
 
 ////////////////////////////////////////////////
 // ALARM HANDLER
@@ -26,6 +25,7 @@ void alarmHandler(int signal)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
+    LinkLayerStateMachine state = START;
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
     int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
@@ -126,9 +126,8 @@ int llopen(LinkLayer connectionParameters)
         (void) signal(SIGALRM, alarmHandler);
         stop = FALSE;
 
-        while(alarmCount < connectionParameters.nRetransmissions && STOP == FALSE && alarmEnabled == FALSE)
+        while (alarmCount < connectionParameters.nRetransmissions && state != STOP) 
         {
-        
             alarm(connectionParameters.timeout);
             if (read(fd, &byte, 1) > 0) {
                 switch (state)
@@ -187,23 +186,165 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 int llwrite(int fd, const unsigned char *buf, int bufSize)
 {
+    /*
     unsigned char data[bufSize + 1];
 
-    data[0] = FLAG;
-    data[1] = ASR;
-    data[2] = CSET;
-    data[3] = (ASR ^ CSET);
-    data[4] = FLAG;
+    while (TRUE) {
+        if (alarmEnabled == FALSE) {
+            data[0] = FLAG;
+            data[1] = ASR;
+            data[2] = CSET;
+            data[3] = (data[1] ^ data[2]);
+            data[4] = FLAG;
+            
+            int bytes = write(fd, buf, bufSize + 1);
+            printf("Bytes written: %d\n", bytes);
+            alarm(3);
+            alarmEnabled = TRUE;
+        }
+        else {
+            int bytes = read(fd, buf, bufSize + 1);
+            if (((data[1] ^data[2]) ^ data[3]) == 0) {
+                alarm(0);
+                for (unsigned int i = 0; i < 5; i++) {
+                    printf("%x ", data[i]);
+                    break;
+                }
+            }
+        }
+        */
+    // Create a frame based on your protocol, add proper header/footer, and calculate BCC
+    // Create a frame based on your protocol, add proper header/footer, and calculate BCC
+    unsigned char frame[MAX_FRAME_SIZE];
+    int frameSize = createFrame(buf, bufSize, frame);
+    
+    // Send the frame
+    int bytesSent = write(fd, frame, frameSize);
+    
+    if (bytesSent != frameSize) {
+        // Handle transmission errors
+        return -1;
+    }
+    
+    // Wait for acknowledgment from the receiver and handle it
+    unsigned char response;
+    int bytesRead = read(fd, &response, 1);
+
+    if (bytesRead == 1 && response == ACK) {
+        // Frame acknowledged
+        return bufSize;
+    } else {
+        // Handle acknowledgment error
+        return -1;
+    }
+}
+    
+
+////////////////////////////////////////////////
+// LLREAD
+////////////////////////////////////////////////
+int llread(int fd, unsigned char *buf, int bufSize)
+{
+    unsigned char frame[MAX_FRAME_SIZE];
+    int frameSize = readFrame(fd, frame, MAX_FRAME_SIZE);
+
+    if (frameSize == -1) {
+        // Handle read error
+        return -1;
+    }
+
+    if (frameSize < HEADER_SIZE) {
+        // Invalid frame
+        return -1;
+    }
+
+    // Process and validate the received frame, check BCC, etc.
+
+    // If the frame is valid, send an ACK
+    if (sendAck(fd) == -1) {
+        // Handle ACK transmission error
+        return -1;
+    }
+
+    // Copy the payload to the output buffer
+    int payloadSize = frameSize - HEADER_SIZE;
+    if (payloadSize <= bufSize) {
+        memcpy(buf, frame + HEADER_SIZE, payloadSize);
+        return payloadSize;
+    } else {
+        // Buffer is too small
+        return -1;
+    }
+
+}
+
+// Function to send an acknowledgment
+int sendAck(int fd) {
+    unsigned char ack = ACK;
+    int bytesSent = write(fd, &ack, 1);
+    
+    if (bytesSent == 1) {
+        return 0;  // Successfully sent ACK
+    } else {
+        return -1;  // Failed to send ACK
+    }
+}
+
+////////////////////////////////////////////////
+// Send a DISC frame and wait for acknowledgment
+////////////////////////////////////////////////
+int sendDISC(int fd)
+{
+    unsigned char discFrame[HEADER_SIZE] = {
+        0x7E,  // FLAG
+        0x03,  // A (Address)
+        0x0B,  // C (Control) - DISC frame
+        0x0B,  // BCC (Block Check Character) - XOR of A and C
+        0x7E,  // FLAG
+    };
+
+    if (write(fd, discFrame, HEADER_SIZE) == -1) {
+        perror("Error sending DISC frame");
+        return -1;
+    }
+
+    printf("DISC frame sent.\n");
 
     return 0;
 }
 
 ////////////////////////////////////////////////
-// LLREAD
+// Wait for a DISC frame and send acknowledgment
 ////////////////////////////////////////////////
-int llread(unsigned char *packet)
+int receiveDISC(int fd)
 {
-    // TODO
+    unsigned char discFrame[MAX_FRAME_SIZE];
+    int bytesRead = 0;
+
+    while (1) {
+        unsigned char byte;
+        if (read(fd, &byte, 1) == -1) {
+            perror("Error reading from the serial port");
+            return -1;
+        }
+
+        discFrame[bytesRead++] = byte;
+
+        if (bytesRead >= HEADER_SIZE && discFrame[bytesRead - 1] == 0x7E) {
+            break; // End of frame
+        }
+    }
+
+    printf("Received DISC frame. Sending acknowledgment.\n");
+
+    // Define an acknowledgment (ACK) variable
+    unsigned char ACK2 = 0x06;
+
+    // Send acknowledgment (ACK)
+    if (write(fd, &ACK2, 1) == -1) {
+        perror("Error sending ACK");
+        return -1;
+    }
 
     return 0;
 }
@@ -211,9 +352,25 @@ int llread(unsigned char *packet)
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics)
-{
-    // TODO
 
-    return 1;
+int llclose(int fd, int showStatistics) {
+    if (showStatistics) {
+        printf("Closing the link layer.\n");
+    }
+
+    if (stop) {
+        return 0;
+    }
+
+    // Assume you are the receiver, waiting for DISC frame
+    if (receiveDISC(fd) == -1) {
+        printf("Error receiving DISC frame.\n");
+        return -1;
+    }
+
+    printf("Link layer closed successfully.\n");
+
+    stop = TRUE;
+
+    return 0;
 }

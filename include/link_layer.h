@@ -17,6 +17,10 @@
 #define CUA 0x07
 #define BAUDRATE 38400
 
+#define MAX_FRAME_SIZE 256
+#define ACK 0x06 // ACK character (hex value 06)
+#define HEADER_SIZE 4 // Assuming a 4-byte headers
+
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_
 
@@ -63,7 +67,9 @@ int llwrite(int fd, const unsigned char *buf, int bufSize);
 
 // Receive data in packet.
 // Return number of chars read, or "-1" on error.
-int llread(unsigned char *packet);
+int llread(int fd, unsigned char *buf, int bufSize);
+
+int sendAck(int fd);
 
 // Close previously opened connection.
 // if showStatistics == TRUE, link layer should print statistics in the console on close.
