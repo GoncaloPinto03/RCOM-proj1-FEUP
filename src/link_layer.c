@@ -8,6 +8,9 @@
 volatile int stop = FALSE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+int senderNumber = 0;
+int receiverNumber = 1;
+
 
 ////////////////////////////////////////////////
 // ALARM HANDLER
@@ -25,6 +28,9 @@ void alarmHandler(int signal)
 ////////////////////////////////////////////////
 int llopen(LinkLayer connectionParameters)
 {
+    printf("*************************************\n");
+    printf("**************** OPEN ***************\n");
+    printf("*************************************\n");
     LinkLayerStateMachine state = START;
     
     // Open serial port device for reading and writing and not as controlling tty
@@ -215,9 +221,103 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-int llwrite(const unsigned char *buf, int bufSize)
+int llwrite(int fd, const unsigned char *buf, int bufSize)
 {
-   
+   printf("*************************************\n");
+   printf("*************** WRITE ***************\n");
+   printf("*************************************\n");
+
+    alarmCount = 0;
+    int STOP = 0;
+    int index = 4;
+    int control = (!senderNumber << 7) | 0x05;
+    unsigned char BCC = 0x00;
+    unsigned char buffer[MAX_FRAME_SIZE]={0};
+    unsigned char data[5] = {0};
+
+    //BCC destuffing
+    for(int i = 0; i < bufSize; i++){
+        BCC = (BCC ^ buf[i]);
+    }
+    buffer[0] = FLAG;
+    buffer[1] = ASR;
+    buffer[2] = (senderNumber << 6);
+    buffer[3] = buffer[1] ^ buffer[2];
+
+    for(int i = 0; i < bufSize; i++){
+        if(buf[i] == FLAG){
+            buffer[index++] = ESC;
+            buffer[index++] = 0x5e;
+            continue;
+        }
+        else if(buf[i] == ESC){
+            buffer[index++] = ESC;
+            buffer[index++] = 0x5D;
+            continue;
+        }
+
+        buffer[index++] = buf[i];
+    }
+
+    //byte stuffing
+    if(BCC == ESC){
+        buffer[index++] = ESC;
+        buffer[index++] = 0x5D;
+    }
+    else if(BCC == FLAG){
+        buffer[index++] = ESC;
+        buffer[index++] = 0x5E;
+    }
+    else{
+        buffer[index++] = BCC;
+    }
+
+    buffer[index++] = FLAG;
+
+    while(!STOP){
+        if(!alarmEnabled){
+            write(fd, buffer, index);
+            printf("Frame sent NS=%d\n", senderNumber);
+
+            (void)signal(SIGALRM, alarmHandler);
+            if (alarmEnabled == FALSE)
+            {
+                alarm(-1);
+                alarmEnabled = TRUE;
+            }
+
+        }
+
+        int result = read(fd, data, 5);
+        
+        if(result != -1 && data != 0){
+            if(data[2] != (control) || (data[3] != (data[1]^data[2]))){
+                printf("RR not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                alarmEnabled=FALSE;
+                continue;
+            }
+            else{
+                printf("RR correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                alarmEnabled=FALSE;
+                STOP=1;
+            }
+        }
+
+        if(alarmCount >= 4){
+            printf("LLWRITE ERROR: Exceeded number of tries while sending frame\n");
+            STOP=1;
+            close(fd);
+            return -1;
+        }
+    }
+    
+    if(senderNumber){
+        senderNumber = 0;
+    }else{
+        senderNumber = -1;
+    }
+
+    return 0;
 }
     
 
@@ -226,7 +326,9 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 int llread(unsigned char *buf, int *packetSize)
 {
-    
+    printf("*************************************\n");
+    printf("**************** READ ***************\n");
+    printf("*************************************\n");
 }
 
 // Function to send an acknowledgment
