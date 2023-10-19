@@ -26,9 +26,11 @@ void alarmHandler(int signal)
 int llopen(LinkLayer connectionParameters)
 {
     LinkLayerStateMachine state = START;
+    
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
     int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
+    
     if (fd < 0)
     {
         perror(connectionParameters.serialPort);
@@ -50,14 +52,14 @@ int llopen(LinkLayer connectionParameters)
     // Clear struct for new port settings
     memset(&newtio, 0, sizeof(newtio));
 
-    newtio.c_cflag = BAUDRATE | CS8 | CLOCAL | CREAD;
+    newtio.c_cflag = connectionParameters.baudRate | CS8 | CLOCAL | CREAD;
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
 
     // Set input mode (non-canonical, no echo,...)
     newtio.c_lflag = 0;
     newtio.c_cc[VTIME] = 0; // Inter-character timer unused
-    newtio.c_cc[VMIN] = 0;  // Blocking read until 5 chars received
+    newtio.c_cc[VMIN] = 1;  // Blocking read until 5 chars received
 
     // VTIME e VMIN should be changed in order to protect with a
     // timeout the reception of the following character(s)
@@ -79,106 +81,135 @@ int llopen(LinkLayer connectionParameters)
     switch (connectionParameters.role)
     {
     case LlRx:
+
+        unsigned char buffer[1] = {0};
+        unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
+        
         while(state != STOP) 
         {
-            if (read(fd, &byte, 1) > 0) {
+            if (read(fd, &buffer, 1) > 0) {
                 switch (state)
                 {
                 case START:
-                    if (byte == FLAG)
+                    if (buffer[0] == FLAG) 
+                    {
                         state = FLAG_RCV;
+                        data[0] = buffer[0];
+                    }
                     break;
                 case FLAG_RCV:
-                    if (byte == ASR)
+                    if (buffer[0] != FLAG) {
                         state = A_RCV;
-                    else if (byte != FLAG)
+                        data[1] = buffer[0];
+                    }
+                    else if (buffer[0] == FLAG){ 
                         state = START;
+                        memset(data, 0, sizeof(data));
+                    }
                     break;
                 case A_RCV:
-                    if (byte == CSET)
+                    if (buffer[0] != FLAG) {
                         state = C_RCV;
-                    else if (byte == FLAG)
-                        state = FLAG_RCV;
-                    else
+                        data[2] = buffer[0];
+                    }
+                    else if (buffer[0] == FLAG) {
                         state = START;
+                        memset(data, 0, sizeof(data));
+                    }
                     break;
                 case C_RCV:
-                    if (byte == (ASR ^ CSET))
+                    if (buffer[0] != FLAG) {
                         state = BCC_OK;
-                    else if (byte == FLAG)
-                        state = FLAG_RCV;
-                    else
+                        data[3] = buffer[0];
+                    }
+                    else if (byte == FLAG) {
                         state = START;
+                        memset(data, 0, sizeof(data));
+                    }
                     break;
                 case BCC_OK:
-                    if (byte == FLAG)
+                    if (buffer[0] != FLAG) {
                         state = STOP;
-                    else
+                        data[4] = buffer[0];
+                    }
+                    else {
                         state = START;
+                        memset(data, 0, sizeof(data));
+                    }
+                    break;
+                case STOP:
+                    if ((data[1] ^ data[2]) == data[3]) {
+                        printf("Connection established\n");
+                        stop = TRUE;
+                    }
+                    else {
+                        state = START;
+                        memset(data, 0, sizeof(data));
+                    }
                     break;
                 default:
                     break;
                 }
             }
         }
+
+        data[2] = CUA;
+        data[3] = (data[1] ^ data[2]);
+
+        int bytes = write(fd, data, sizeof(data));
+        printf("UA MESSAGE SENT -> %d BYTES WRITTEN\n", bytes);
+
         break;
     case LlTx:
-        (void) signal(SIGALRM, alarmHandler);
-        stop = FALSE;
 
-        while (alarmCount < connectionParameters.nRetransmissions && state != STOP) 
-        {
-            alarm(connectionParameters.timeout);
-            if (read(fd, &byte, 1) > 0) {
-                switch (state)
-                {
-                case START:
-                    if (byte == FLAG)
-                        state = FLAG_RCV;
-                    break;
-                case FLAG_RCV:
-                    if (byte == ARS)
-                        state = A_RCV;
-                    else if (byte != FLAG)
-                        state = START;
-                    break;
-                case A_RCV:
-                    if (byte == CUA)
-                        state = C_RCV;
-                    else if (byte == FLAG)
-                        state = FLAG_RCV;
-                    else
-                        state = START;
-                    break;
-                case C_RCV:
-                    if (byte == (ARS ^ CUA))
-                        state = BCC_OK;
-                    else if (byte == FLAG)
-                        state = FLAG_RCV;
-                    else
-                        state = START;
-                    break;
-                case BCC_OK:
-                    if (byte == FLAG)
-                        state = STOP;
-                    else
-                        state = START;
-                    break;
-                default:
+        unsigned char buffer[1] = {0};
+        unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
+
+        buffer[0] = FLAG;
+        buffer[1] = ASR;
+        buffer[2] = CSET;
+        buffer[3] = (buffer[1] ^ buffer[2]);
+        buffer[4] = FLAG;
+
+        while (alarmCount < connectionParameters.nRetransmissions) {
+            
+            if (alarmEnabled == FALSE) {
+
+                int bytes = write(fd, buffer, sizeof(buffer));
+                printf("SET message sent -> %d bytes written\n", bytes);                
+                
+                (void)signal(SIGALRM, alarmHandler);
+                if (alarmEnabled == FALSE) {
+                    alarm(connectionParameters.timeout);
+                    alarmEnabled = TRUE;
+                }
+            }
+
+            int bytes = read(fd, data, sizeof(data));
+            if (bytes > 0 && data != 0 && data[0] == FLAG) {
+                
+                if (data[2] != CUA || data[3] != (data[1] ^ data[2])) {
+                    printf("Connection failed -> UA Incorrect!\n");
+                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    alarmEnabled = FALSE;
+                    continue;;
+                }
+                else {
+                    printf("Connection established -> UA Correct!\n");
+                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    alarmEnabled = FALSE;
                     break;
                 }
             }
-            connectionParameters.nRetransmissions--;
         }
-        if (state != STOP)
-        {
-            printf("Connection failed\n");
+
+        if (alarmCount >= connectionParameters.nRetransmissions) {
+            printf("Connection failed -> Alarm limit reached\n");
             return -1;
         }
-        break;
     }
 
-    return fd;
+    return 1;
 }
 
 ////////////////////////////////////////////////
