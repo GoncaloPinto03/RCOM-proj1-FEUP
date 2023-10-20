@@ -10,7 +10,11 @@ int alarmEnabled = FALSE;
 int alarmCount = 0;
 int senderNumber = 0;
 int receiverNumber = 1;
+int lastFrameNumber = -1;
 
+int fd = -1;
+int timeout = -1;
+int nRetransmissions = -1;
 
 ////////////////////////////////////////////////
 // ALARM HANDLER
@@ -33,9 +37,12 @@ int llopen(LinkLayer connectionParameters)
     printf("*************************************\n");
     LinkLayerStateMachine state = START;
     
+    nRetransmissions = connectionParameters.nRetransmissions;
+    timeout = connectionParameters.timeout;
+
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
-    int fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
+    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
     
     if (fd < 0)
     {
@@ -186,7 +193,7 @@ int llopen(LinkLayer connectionParameters)
                 
                 (void)signal(SIGALRM, alarmHandler);
                 if (alarmEnabled == FALSE) {
-                    alarm(connectionParameters.timeout);
+                    alarm(-1);
                     alarmEnabled = TRUE;
                 }
             }
@@ -282,7 +289,7 @@ int llwrite(int fd, const unsigned char *buf, int bufSize)
             (void)signal(SIGALRM, alarmHandler);
             if (alarmEnabled == FALSE)
             {
-                alarm(-1);
+                alarm(timeout);
                 alarmEnabled = TRUE;
             }
 
@@ -292,20 +299,20 @@ int llwrite(int fd, const unsigned char *buf, int bufSize)
         
         if(result != -1 && data != 0){
             if(data[2] != (control) || (data[3] != (data[1]^data[2]))){
-                printf("RR not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                printf("Wrong RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
                 continue;
             }
             else{
-                printf("RR correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                printf("Correct RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
-                STOP=1;
+                STOP = 1;
             }
         }
 
-        if(alarmCount >= 4){
+        if(alarmCount >= nRetransmissions){ //alarm limit reached
             printf("LLWRITE ERROR: Exceeded number of tries while sending frame\n");
-            STOP=1;
+            STOP = 1;
             close(fd);
             return -1;
         }
@@ -314,7 +321,7 @@ int llwrite(int fd, const unsigned char *buf, int bufSize)
     if(senderNumber){
         senderNumber = 0;
     }else{
-        senderNumber = -1;
+        senderNumber = 1;
     }
 
     return 0;
@@ -329,77 +336,184 @@ int llread(unsigned char *buf, int *packetSize)
     printf("*************************************\n");
     printf("**************** READ ***************\n");
     printf("*************************************\n");
-}
 
-// Function to send an acknowledgment
-int sendAck(int fd) {
-    unsigned char ack = ACK;
-    int bytesSent = write(fd, &ack, 1);
+    alarmCount = 0;
+    int index = 0;
+    int control = (!receiverNumber << 6);
+    unsigned char BCC2 = 0x00;
+    unsigned char frame[MAX_FRAME_SIZE]={0};
+    unsigned char data[5] = {0};
+    unsigned char aux[400] = {0};
+    unsigned char flag = 0;
+    unsigned char STOP = FALSE;
+    int infoSize = 0;
+
+    unsigned char buffer[1] = {0};
+
+    LinkLayerStateMachine state = START;
+    unsigned char readByte = TRUE;
+
+    while (STOP == TRUE)
+    {
+        if (readByte == TRUE) {
+            int bytes = read(fd, buffer, 1);
+            if (bytes == -1 || bytes == 0) {
+                perror("Error reading from the serial port");
+                continue;
+            }
+        }
+
+        switch (state)
+        {
+        case START:
+            if (buffer[0] == FLAG) {
+                state = FLAG_RCV;
+                frame[infoSize++] = buffer[0];
+            }
+            break;
+        
+        case FLAG_RCV:
+            if (buffer[0] != FLAG) {
+                state = A_RCV;
+                frame[infoSize++] = buffer[0];
+            }
+            else if (buffer[0] == FLAG) {
+                state = FLAG_RCV;
+                infoSize = 0;
+                frame[infoSize++] = buffer[0];
+            }
+            break;
+        
+        case A_RCV:
+            if (buffer[0] != FLAG) {
+                frame[infoSize++] = buffer[0];
+            }
+            else if (buffer[0] == FLAG) {
+                STOP = TRUE;
+                frame[infoSize++] = buffer[0];
+                readByte = FALSE;
+            }
+            break;
+        default:
+            break;
+        }   
+
+    data[0] = FLAG;
+    data[1] = ASR;
+    data[4] = FLAG;
+    }
+
+    if (((frame[1] ^ frame[2]) != frame[3]) || (frame[2] != control)) {
+        printf("Wrong frame received\n");
+        data[2] = (receiverNumber << 7) | 0x01;
+        data[3] = (data[1] ^ data[2]);
+        write(fd, data, 5);
+        printf("RR sent\n");
+        printf("Size of REJ -> %d\n", 5);
+
+        for(int i=0; i<5; i++) {
+            printf("%02X ", data[i]);
+        }
+        return -1;
+    }
+
+
+    for(int i = 0; i < infoSize; i++){
+        if(frame[i] == 0x7D && frame[i+1]==0x5e){
+            buf[index++] = 0x7E;
+            i++;
+        }
+
+        else if(frame[i] == 0x7D && frame[i+1]==0x5d){
+            buf[index++] = 0x7D;
+            i++;
+        }
+
+        else {buf[index++] = frame[i];}
+    }
+
+    int size = 0;
+
+    if(buf[4]==0x01){
+        size = 256*buf[6]+buf[7]+4 +6; //+4 para contar com os bytes de controlo, numero de seq e tamanho
+        for(int i=4; i<size-2; i++){
+            BCC2 = BCC2 ^ buf[i];
+        }
+    }
     
-    if (bytesSent == 1) {
-        return 0;  // Successfully sent ACK
-    } else {
-        return -1;  // Failed to send ACK
-    }
-}
+    else{
+        size += buf[6]+ 3 + 4; //+3 para contar com os bytes de C, T1 e L1 // +4 para contar com os bytes FLAG, A, C, BCC
+        size += buf[size+1] + 2 +2; //+2 para contar com T2 e L2 //+2 para contar com BCC2 e FLAG
 
-////////////////////////////////////////////////
-// Send a DISC frame and wait for acknowledgment
-////////////////////////////////////////////////
-int sendDISC(int fd)
-{
-    unsigned char discFrame[HEADER_SIZE] = {
-        0x7E,  // FLAG
-        0x03,  // A (Address)
-        0x0B,  // C (Control) - DISC frame
-        0x0B,  // BCC (Block Check Character) - XOR of A and C
-        0x7E,  // FLAG
-    };
-
-    if (write(fd, discFrame, HEADER_SIZE) == -1) {
-        perror("Error sending DISC frame");
-        return -1;
-    }
-
-    printf("DISC frame sent.\n");
-
-    return 0;
-}
-
-////////////////////////////////////////////////
-// Wait for a DISC frame and send acknowledgment
-////////////////////////////////////////////////
-int receiveDISC(int fd)
-{
-    unsigned char discFrame[MAX_FRAME_SIZE];
-    int bytesRead = 0;
-
-    while (1) {
-        unsigned char byte;
-        if (read(fd, &byte, 1) == -1) {
-            perror("Error reading from the serial port");
-            return -1;
-        }
-
-        discFrame[bytesRead++] = byte;
-
-        if (bytesRead >= HEADER_SIZE && discFrame[bytesRead - 1] == 0x7E) {
-            break; // End of frame
+        for(int i=4; i<size-2; i++){
+            BCC2 = BCC2 ^ buf[i];
         }
     }
 
-    printf("Received DISC frame. Sending acknowledgment.\n");
 
-    // Define an acknowledgment (ACK) variable
-    unsigned char ACK2 = 0x06;
+    if(buf[size-2] == BCC2){
 
-    // Send acknowledgment (ACK)
-    if (write(fd, &ACK2, 1) == -1) {
-        perror("Error sending ACK");
+        if(buf[4]==0x01){
+            if(frame[5] == lastFrameNumber){
+                printf("\nInfoFrame received correctly. Repeated Frame. Sending RR.\n");
+                data[2] = (receiverNumber << 7) | 0x05;
+                data[3] = data[1] ^ data[2];
+                write(fd, data, 5);
+                return -1;
+            }   
+            else{
+                lastFrameNumber = frame[5];
+            }
+        }
+        printf("\nInfoFrame received correctly. Sending RR.\n");
+        data[2] = (receiverNumber << 7) | 0x05;
+        data[3] = data[1] ^ data[2];
+        write(fd, data, 5);
+    }
+    
+    else {
+        printf("\nInfoFrame not received correctly. Error in data packet. Sending REJ.\n");
+        data[2] = (receiverNumber << 7) | 0x01;
+        data[3] = data[1] ^ data[2];
+        write(fd, data, 5);
+
+        /*printf("\n-----REJ-----\n");
+        printf("\nSize of REJ: %d\nREJ: 0x", 5);
+
+        for(int i=0; i<5; i++){
+            printf("%02X ", supFrame[i]);
+        }
+
+        printf("\n\n");*/
+
         return -1;
     }
 
-    return 0;
+    (*packetSize) = size;
+
+    index = 0;
+    
+    for(int i=4; i<(*packetSize)-2; i++){
+        aux[index++] = buf[i];
+    }
+
+    
+    (*packetSize) = size - 6;
+
+    memset(buf,0,sizeof(buf));
+
+    for(int i=0; i<(*packetSize); i++){
+        buf[i] = aux[i];
+    }
+
+
+    if(receiverNumber){
+        receiverNumber = 0;
+    }
+    else {receiverNumber = 1;}
+
+    return 1;
+
 }
 
 ////////////////////////////////////////////////
