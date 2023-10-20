@@ -30,13 +30,17 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     lLayer.nRetransmissions = nTries;
     lLayer.timeout = timeout;
 
+    
+
     int fd = llopen(lLayer);
 
     clock_t start, end;
 
+    printf("SAIU DO LLOPEN\n");
     start = clock();
     //segmento testado e funcional (a excecao de llwrite)
-    if(role == LlTx){
+    if(lRole == LlTx){
+        printf("entrei neste if");
         unsigned char packet[300], bytes[200], fileNotOver = 1;
         int sizePacket = 0;
        
@@ -56,6 +60,8 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
 
         sizePacket = getControlPacket(filename,1,&packet);
+
+        printf("vem agora o if do llwrite\n");
 
         if(llwrite(packet, sizePacket) == -1){
             return;
@@ -114,6 +120,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         
             unsigned char packet[600] = {0};
             int sizeOfPacket = 0, index = 0;
+            
             
             if(llread(&packet, &sizeOfPacket)==-1){
                 continue;
