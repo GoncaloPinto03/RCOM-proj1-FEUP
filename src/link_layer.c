@@ -228,7 +228,7 @@ int llopen(LinkLayer connectionParameters)
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-int llwrite(int fd, const unsigned char *buf, int bufSize)
+int llwrite(const unsigned char *buf, int bufSize)
 {
    printf("*************************************\n");
    printf("*************** WRITE ***************\n");
@@ -520,6 +520,152 @@ int llread(unsigned char *buf, int *packetSize)
 // LLCLOSE
 ////////////////////////////////////////////////
 
-int llclose(int showStatistics) {
-    return 0;
+int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
+    alarmCount = 0;
+
+    printf("*************************************\n");
+    printf("*************** CLOSE ***************\n");
+    printf("*************************************\n");
+
+    switch (connectionParameters.role)
+    {
+    case LlRx:
+        unsigned char buffer[6] = {0}, data[6] = {0};
+        unsigned char STOP = 0, UA = 0;
+
+        buffer[0] = 0x7E;
+        buffer[1] = 0x03;
+        buffer[2] = 0x0B;
+        buffer[3] = buffer[1]^buffer[2];
+        buffer[4] = 0x7E;
+        buffer[5] = '\0';
+
+
+        while(!STOP){
+            int result = read(fd, data, 5);
+            
+            data[5] = '\0';
+
+            if(result==-1){
+                continue;
+            }
+
+
+            else if(strcasecmp(buffer, data) == 0){
+                printf("\nDISC message received. Responding now.\n");
+                
+                buffer[1] = 0x01;
+                buffer[3] = buffer[1]^buffer[2];
+
+                while(alarmCount < connectionParameters.nRetransmissions){
+
+                    if(!alarmEnabled){
+                        printf("\nDISC message sent, %d bytes written\n", 5);
+                        write(fd, buffer, 5);
+                        startAlarm(connectionParameters.timeout);
+                    }
+                    
+                    int result = read(fd, data, 5);
+                    if( data != 0 && result != -1 && data[0]==0x7E){
+                        //se o UA estiver errado 
+                        if(data[2] != 0x07 || (data[3] != (data[1]^data[2]))){
+                            printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                            alarmEnabled = FALSE;
+                            continue;
+                        }
+                        
+                        else{   
+                            printf("\nUA correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                            alarmEnabled = FALSE;
+                            close(fd);
+                            break;
+                        }
+                    }
+
+                }
+
+                if(alarmCount >= connectionParameters.nRetransmissions){
+                    printf("\nAlarm limit reached, DISC message not sent\n");
+                    return -1;
+                }
+                
+                STOP = TRUE;
+            }
+        
+        }
+        break;
+
+    case LlTx:
+        alarmCount = 0;
+
+        unsigned char buffer[6] = {0}, data[6] = {0};
+
+        buffer[0] = 0x7E;
+        buffer[1] = 0x03;
+        buffer[2] = 0x0B;
+        buffer[3] = buffer[1]^buffer[2];
+        buffer[4] = 0x7E;
+        buffer[5] = '\0'; //assim posso usar o strcmp
+
+        while(alarmCount < connectionParameters.nRetransmissions){
+
+            if(!alarmEnabled){
+                
+                int bytes = write(fd, buffer, 5);
+                printf("\nDISC message sent, %d bytes written\n", bytes);
+                startAlarm(connectionParameters.timeout);
+            }
+
+            //sleep(2);
+            
+            int result = read(fd, data, 5);
+
+            buffer[1] = 0x01;
+            buffer[3] = buffer[1]^buffer[2];
+            data[5] = '\0';
+
+            if(result != -1 && data != 0 && data[0]==0x7E){
+                //se o DISC estiver errado 
+                if(strcasecmp(buffer, data) != 0){
+                    printf("\nDISC not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    alarmEnabled = FALSE;
+                    continue;
+                }
+                
+                else{   
+                    printf("\nDISC correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    alarmEnabled = FALSE;
+                    
+                    buffer[1] = 0x01;
+                    buffer[2] = 0x07;
+                    buffer[3] = buffer[1]^buffer[2];
+
+                    int bytes = write(fd, buffer, 5);
+
+                    close(fd);
+
+                    printf("\nUA message sent, %d bytes written.\n\nI'm shutting off now, bye bye!\n", bytes);
+                    return 1;
+
+                }
+            }
+
+        }
+
+        if(alarmCount >= connectionParameters.nRetransmissions){
+            printf("\nAlarm limit reached, DISC message not sent\n");
+            close(fd);
+            return -1;
+        }
+    }
+
+    if(showStatistics){
+        printf("*************************************\n");
+        printf("*************** STATS ***************\n");
+        printf("*************************************\n");
+        printf("\nNumber of packets sent: %d\nSize of data packets in information frame: %d\nTotal run time: %f\nAverage time per packet: %f\n", lastFrameNumber, 200, runTime, runTime/200.0);
+
+    }
+
+    return 1;
 }
