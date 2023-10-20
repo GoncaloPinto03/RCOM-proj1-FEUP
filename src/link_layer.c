@@ -350,10 +350,13 @@ int llread(unsigned char *buf, int *packetSize)
     LinkLayerStateMachine state = START;
     unsigned char readByte = TRUE;
 
-    while (STOP == TRUE)
+    
+    while (STOP == FALSE)
     {
         if (readByte == TRUE) {
+            printf("VOU FAZER READ\n");
             int bytes = read(fd, buffer, 1);
+            printf("JA FIZ READ %d\n", bytes);
             if (bytes == -1 || bytes == 0) {
                 perror("Error reading from the serial port");
                 continue;
