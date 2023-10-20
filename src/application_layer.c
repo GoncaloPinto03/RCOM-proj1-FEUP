@@ -40,7 +40,6 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     start = clock();
     //segmento testado e funcional (a excecao de llwrite)
     if(lRole == LlTx){
-        printf("entrei neste if");
         unsigned char packet[300], bytes[200], fileNotOver = 1;
         int sizePacket = 0;
        

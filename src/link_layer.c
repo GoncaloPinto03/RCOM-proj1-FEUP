@@ -5,7 +5,6 @@
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
 
-volatile int stop = FALSE;
 int alarmEnabled = FALSE;
 int alarmCount = 0;
 int senderNumber = 0;
@@ -42,12 +41,12 @@ int llopen(LinkLayer connectionParameters)
 
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
-    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY);
+    fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY | O_NONBLOCK);
     
     if (fd < 0)
     {
         perror(connectionParameters.serialPort);
-        return -1;
+        exit(-1);
     }
 
     unsigned char byte;
@@ -91,16 +90,27 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
+    printf("New termios structure set\n");
+
+    volatile int stop = FALSE;
+
     if (connectionParameters.role == LlRx) {
 
         unsigned char buffer[1] = {0};
         unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
         
-        while(state != STOP) 
+        unsigned char readByte = TRUE;
+
+        while(stop == FALSE) 
         {
-            if (read(fd, &buffer, 1) > 0) {
-                switch (state)
-                {
+            if (readByte == TRUE) {
+                int bytes = read(fd, &buffer, 1);
+                if (bytes == 0 | bytes == -1) {
+                    continue;
+                }
+            }   
+            switch (state)
+            {
                 case START:
                     if (buffer[0] == FLAG) 
                     {
@@ -162,7 +172,6 @@ int llopen(LinkLayer connectionParameters)
                     break;
                 }
             }
-        }
 
         data[2] = CUA;
         data[3] = (data[1] ^ data[2]);
@@ -190,7 +199,7 @@ int llopen(LinkLayer connectionParameters)
                 
                 (void)signal(SIGALRM, alarmHandler);
                 if (alarmEnabled == FALSE) {
-                    alarm(-1);
+                    alarm(timeout);
                     alarmEnabled = TRUE;
                 }
             }
@@ -213,7 +222,7 @@ int llopen(LinkLayer connectionParameters)
             }
         }
 
-        if (alarmCount >= connectionParameters.nRetransmissions) {
+        if (alarmCount >= nRetransmissions) {
             printf("Connection failed -> Alarm limit reached\n");
             return -1;
         }
@@ -455,7 +464,7 @@ int llread(unsigned char *buf, int *packetSize)
 
         if(buf[4]==0x01){
             if(frame[5] == lastFrameNumber){
-                printf("\nInfoFrame received correctly. Repeated Frame. Sending RR.\n");
+                printf("\nFrame received correctly. Repeated Frame. Sending RR.\n");
                 data[2] = (receiverNumber << 7) | 0x05;
                 data[3] = data[1] ^ data[2];
                 write(fd, data, 5);
@@ -465,7 +474,7 @@ int llread(unsigned char *buf, int *packetSize)
                 lastFrameNumber = frame[5];
             }
         }
-        printf("\nInfoFrame received correctly. Sending RR.\n");
+        printf("\nFrame received correctly. Sending RR.\n");
         data[2] = (receiverNumber << 7) | 0x05;
         data[3] = data[1] ^ data[2];
         write(fd, data, 5);
@@ -563,7 +572,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
                         if (alarmEnabled == FALSE)
                         {
-                            alarm(connectionParameters.timeout);
+                            alarm(timeout);
                             alarmEnabled = TRUE;
                         }
                     }
