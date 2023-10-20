@@ -30,6 +30,7 @@
 #define MAX_FRAME_SIZE 600
 #define ACK 0x06 // ACK character (hex value 06)
 #define HEADER_SIZE 4 // Assuming a 4-byte headers
+#define SIGALRM 14
 
 #ifndef _LINK_LAYER_H_
 #define _LINK_LAYER_H_

@@ -91,9 +91,7 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
-    switch (connectionParameters.role)
-    {
-    case LlRx:
+    if (connectionParameters.role == LlRx) {
 
         unsigned char buffer[1] = {0};
         unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
@@ -171,9 +169,8 @@ int llopen(LinkLayer connectionParameters)
 
         int bytes = write(fd, data, sizeof(data));
         printf("UA MESSAGE SENT -> %d BYTES WRITTEN\n", bytes);
-
-        break;
-    case LlTx:
+    }
+    else if (connectionParameters.role == LlTx) {
 
         unsigned char buffer[1] = {0};
         unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
@@ -497,7 +494,6 @@ int llread(unsigned char *buf, int *packetSize)
         aux[index++] = buf[i];
     }
 
-    
     (*packetSize) = size - 6;
 
     memset(buf,0,sizeof(buf));
@@ -506,14 +502,12 @@ int llread(unsigned char *buf, int *packetSize)
         buf[i] = aux[i];
     }
 
-
     if(receiverNumber){
         receiverNumber = 0;
     }
     else {receiverNumber = 1;}
 
     return 1;
-
 }
 
 ////////////////////////////////////////////////
@@ -527,19 +521,18 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
     printf("*************** CLOSE ***************\n");
     printf("*************************************\n");
 
-    switch (connectionParameters.role)
+    if (connectionParameters.role == LlRx)
     {
-    case LlRx:
         unsigned char buffer[6] = {0}, data[6] = {0};
-        unsigned char STOP = 0, UA = 0;
-
         buffer[0] = 0x7E;
         buffer[1] = 0x03;
         buffer[2] = 0x0B;
         buffer[3] = buffer[1]^buffer[2];
         buffer[4] = 0x7E;
-        buffer[5] = '\0';
+        buffer[5] = '\0'; //assim posso usar o strcmp
 
+        
+        unsigned char STOP = FALSE, UA = FALSE;
 
         while(!STOP){
             int result = read(fd, data, 5);
@@ -562,7 +555,14 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                     if(!alarmEnabled){
                         printf("\nDISC message sent, %d bytes written\n", 5);
                         write(fd, buffer, 5);
-                        startAlarm(connectionParameters.timeout);
+
+                        (void)signal(SIGALRM, alarmHandler);
+
+                        if (alarmEnabled == FALSE)
+                        {
+                            alarm(connectionParameters.timeout);
+                            alarmEnabled = TRUE;
+                        }
                     }
                     
                     int result = read(fd, data, 5);
@@ -592,20 +592,19 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                 STOP = TRUE;
             }
         
+        
         }
-        break;
-
-    case LlTx:
-        alarmCount = 0;
+    }
+    else if (connectionParameters.role == LlTx) {
 
         unsigned char buffer[6] = {0}, data[6] = {0};
-
         buffer[0] = 0x7E;
         buffer[1] = 0x03;
         buffer[2] = 0x0B;
         buffer[3] = buffer[1]^buffer[2];
         buffer[4] = 0x7E;
         buffer[5] = '\0'; //assim posso usar o strcmp
+        alarmCount = 0;
 
         while(alarmCount < connectionParameters.nRetransmissions){
 
@@ -613,7 +612,13 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                 
                 int bytes = write(fd, buffer, 5);
                 printf("\nDISC message sent, %d bytes written\n", bytes);
-                startAlarm(connectionParameters.timeout);
+                (void)signal(SIGALRM, alarmHandler);
+
+                if (alarmEnabled == FALSE)
+                {
+                    alarm(connectionParameters.timeout);
+                    alarmEnabled = TRUE;
+                }
             }
 
             //sleep(2);
@@ -668,4 +673,5 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
     }
 
     return 1;
+
 }
