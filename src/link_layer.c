@@ -252,7 +252,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     alarmCount = 0;
     int STOP = 0;
     int index = 4;
-    int control = (!numSender << 7) | 0x05;
+    int control = (!numSender << 7) | 0x05; //7 bits menos significativos sao preenchidos com 0, e os 25 bits mais significativos sao preenchidos com o resultado do deslocamento
     unsigned char BCC = 0x00;
     unsigned char buffer[MAX_FRAME_SIZE]={0};
     unsigned char data[5] = {0};
@@ -281,8 +281,14 @@ int llwrite(const unsigned char *buf, int bufSize)
         buffer[index++] = buf[i];
     }
 
-    //byte stuffing
+    /*
+    byte stuffing -> utilizado para evitar conflitos entre bytes de dados e bytes de controle
+    Se BCC==ESC ele é escrito como ESC 0x5D
+    Se BCC==FLAG ele é transmitido como ESC 0x5E
+    Isto evita que ESC e FLAG sejam mal interpretados como inicio ou fim de trama/quadro de dados 
+    */
     if(BCC == ESC){
+        // ESC é usado como um indicador de que o próximo caractere não deve ser interpretado como dado, mas sim como um caractere de controle
         buffer[index++] = ESC;
         buffer[index++] = 0x5D;
     }
@@ -310,9 +316,13 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         }
 
+        
+        //Lidar com resposta do recetor
         int result = read(fd, data, 5);
         
         if(result != -1 && data != 0){
+            //verificar variavel control da resposta com a trama enviada
+            //verificar address_sender^bcc da resposta com a da trama
             if(data[2] != (control) || (data[3] != (data[1]^data[2]))){
                 printf("Wrong RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
