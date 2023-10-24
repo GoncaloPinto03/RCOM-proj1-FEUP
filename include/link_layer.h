@@ -68,8 +68,15 @@ typedef enum
 #define FALSE 0
 #define TRUE 1
 
+// Alarm function handler.
+void alarmHandler(int signal);
+
+// Inits a connection using the "port" parameters defined in struct linkLayer.
+// Return fd value on success or "-1" on error.
+int llinit(LinkLayer connectionParameters);
+
 // Open a connection using the "port" parameters defined in struct linkLayer.
-// Return "1" on success or "-1" on error.
+// Return 1 on success or "-1" on error.
 int llopen(LinkLayer connectionParameters);
 
 // Send data in buf with size bufSize.

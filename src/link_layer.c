@@ -7,13 +7,15 @@
 
 int alarmEnabled = FALSE;
 int alarmCount = 0;
-int senderNumber = 0;
-int receiverNumber = 1;
+int numSender = 0;
+int numReceiver = 1;
 int lastFrameNumber = -1;
 
 int fd = -1;
 int timeout = -1;
+int baudRate = -1;
 int nRetransmissions = -1;
+LinkLayerRole role;
 
 ////////////////////////////////////////////////
 // ALARM HANDLER
@@ -27,17 +29,9 @@ void alarmHandler(int signal)
 }
 
 ////////////////////////////////////////////////
-// LLOPEN
+// INIT
 ////////////////////////////////////////////////
-int llopen(LinkLayer connectionParameters)
-{
-    printf("*************************************\n");
-    printf("**************** OPEN ***************\n");
-    printf("*************************************\n");
-    LinkLayerStateMachine state = START;
-    
-    nRetransmissions = connectionParameters.nRetransmissions;
-    timeout = connectionParameters.timeout;
+int llinit(LinkLayer connectionParameters) {
 
     // Open serial port device for reading and writing and not as controlling tty
     // because we don't want to get killed if linenoise sends CTRL-C.
@@ -90,13 +84,35 @@ int llopen(LinkLayer connectionParameters)
         return -1;
     }
 
+    return fd;
+}
+
+////////////////////////////////////////////////
+// LLOPEN
+////////////////////////////////////////////////
+int llopen(LinkLayer connectionParameters)
+{
+    printf("*************************************\n");
+    printf("**************** OPEN ***************\n");
+    printf("*************************************\n");
+    LinkLayerStateMachine state = START;
+    
+    nRetransmissions = connectionParameters.nRetransmissions;
+    timeout = connectionParameters.timeout;
+    baudRate = connectionParameters.baudRate;
+    role = connectionParameters.role;
+
+    if (llinit(connectionParameters) == -1) {
+        return -1;
+    }
+
     printf("New termios structure set\n");
 
     volatile int stop = FALSE;
 
     if (connectionParameters.role == LlRx) {
 
-        unsigned char buffer[1] = {0};
+        unsigned char buffer;
         unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
         
         unsigned char readByte = TRUE;
@@ -104,56 +120,52 @@ int llopen(LinkLayer connectionParameters)
         while(stop == FALSE) 
         {
             if (readByte == TRUE) {
-                int bytes = read(fd, &buffer, 1);
-                if (bytes == 0 | bytes == -1) {
-                    continue;
-                }
+                if (read(fd, &buffer, 1) < 1) continue;
             }   
             switch (state)
             {
                 case START:
-                    if (buffer[0] == FLAG) 
-                    {
+                    if (buffer == FLAG) {
                         state = FLAG_RCV;
-                        data[0] = buffer[0];
+                        data[0] = buffer;
                     }
                     break;
                 case FLAG_RCV:
-                    if (buffer[0] != FLAG) {
+                    if (buffer != FLAG) {
                         state = A_RCV;
-                        data[1] = buffer[0];
+                        data[1] = buffer;
                     }
-                    else if (buffer[0] == FLAG){ 
+                    else if (buffer == FLAG){ 
                         state = START;
                         memset(data, 0, sizeof(data));
                     }
                     break;
                 case A_RCV:
-                    if (buffer[0] != FLAG) {
+                    if (buffer != FLAG) {
                         state = C_RCV;
-                        data[2] = buffer[0];
+                        data[2] = buffer;
                     }
-                    else if (buffer[0] == FLAG) {
+                    else if (buffer == FLAG) {
                         state = START;
                         memset(data, 0, sizeof(data));
                     }
                     break;
                 case C_RCV:
-                    if (buffer[0] != FLAG) {
+                    if (buffer != FLAG) {
                         state = BCC_OK;
-                        data[3] = buffer[0];
+                        data[3] = buffer;
                     }
-                    else if (byte == FLAG) {
+                    else if (buffer == FLAG) {
                         state = START;
                         memset(data, 0, sizeof(data));
                     }
                     break;
                 case BCC_OK:
-                    if (buffer[0] != FLAG) {
+                    if (buffer != FLAG) {
                         state = STOP;
-                        data[4] = buffer[0];
+                        data[4] = buffer;
                     }
-                    else {
+                    else if (buffer == FLAG){
                         state = START;
                         memset(data, 0, sizeof(data));
                     }
@@ -166,6 +178,7 @@ int llopen(LinkLayer connectionParameters)
                     else {
                         state = START;
                         memset(data, 0, sizeof(data));
+                        readByte = TRUE;
                     }
                     break;
                 default:
@@ -181,21 +194,15 @@ int llopen(LinkLayer connectionParameters)
     }
     else if (connectionParameters.role == LlTx) {
 
-        unsigned char buffer[1] = {0};
-        unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
+        unsigned char buffer[5] = {FLAG, ASR, CSET, ASR^CSET, FLAG};
+        unsigned char data[5] = {0}; 
 
-        buffer[0] = FLAG;
-        buffer[1] = ASR;
-        buffer[2] = CSET;
-        buffer[3] = (buffer[1] ^ buffer[2]);
-        buffer[4] = FLAG;
-
-        while (alarmCount < connectionParameters.nRetransmissions) {
+        while (alarmCount < nRetransmissions) {
             
             if (alarmEnabled == FALSE) {
 
                 int bytes = write(fd, buffer, sizeof(buffer));
-                printf("SET message sent -> %d bytes written\n", bytes);                
+                printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
                 
                 (void)signal(SIGALRM, alarmHandler);
                 if (alarmEnabled == FALSE) {
@@ -204,29 +211,31 @@ int llopen(LinkLayer connectionParameters)
                 }
             }
 
-            int bytes = read(fd, data, sizeof(data));
-            if (bytes > 0 && data != 0 && data[0] == FLAG) {
+            int res = read(fd, data, sizeof(data));
+            if (res > 0 && data != 0 && data[0] == FLAG) {
                 
-                if (data[2] != CUA || data[3] != (data[1] ^ data[2])) {
-                    printf("Connection failed -> UA Incorrect!\n");
-                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
-                    alarmEnabled = FALSE;
-                    continue;;
-                }
-                else {
-                    printf("Connection established -> UA Correct!\n");
+                if (data[2] == CUA || data[3] == (data[1] ^ data[2])) {
+                    printf("CORRECT UA\n");
                     printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
                     break;
+                }
+                else {
+                    printf("WRONG UA\n");
+                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    alarmEnabled = FALSE;
+                    continue;
                 }
             }
         }
 
         if (alarmCount >= nRetransmissions) {
-            printf("Connection failed -> Alarm limit reached\n");
+            printf("ALARM LIMIT\n");
             return -1;
         }
     }
+
+    alarmEnabled = FALSE;
 
     return 1;
 }
@@ -243,7 +252,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     alarmCount = 0;
     int STOP = 0;
     int index = 4;
-    int control = (!senderNumber << 7) | 0x05;
+    int control = (!numSender << 7) | 0x05;
     unsigned char BCC = 0x00;
     unsigned char buffer[MAX_FRAME_SIZE]={0};
     unsigned char data[5] = {0};
@@ -254,7 +263,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     }
     buffer[0] = FLAG;
     buffer[1] = ASR;
-    buffer[2] = (senderNumber << 6);
+    buffer[2] = (numSender << 6);
     buffer[3] = buffer[1] ^ buffer[2];
 
     for(int i = 0; i < bufSize; i++){
@@ -290,7 +299,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     while(!STOP){
         if(!alarmEnabled){
             write(fd, buffer, index);
-            printf("Frame sent NS=%d\n", senderNumber);
+            printf("Frame sent NS=%d\n", numSender);
 
             (void)signal(SIGALRM, alarmHandler);
             if (alarmEnabled == FALSE)
@@ -324,10 +333,10 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
     }
     
-    if(senderNumber){
-        senderNumber = 0;
+    if(numSender){
+        numSender = 0;
     }else{
-        senderNumber = 1;
+        numSender = 1;
     }
 
     return 0;
@@ -337,7 +346,7 @@ int llwrite(const unsigned char *buf, int bufSize)
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
-int llread(unsigned char *buf, int *packetSize)
+int llread(unsigned char *packet, int *packetSize)
 {
     printf("*************************************\n");
     printf("**************** READ ***************\n");
@@ -345,7 +354,7 @@ int llread(unsigned char *buf, int *packetSize)
 
     alarmCount = 0;
     int index = 0;
-    int control = (!receiverNumber << 6);
+    int control = (!numReceiver << 6);
     unsigned char BCC2 = 0x00;
     unsigned char frame[MAX_FRAME_SIZE]={0};
     unsigned char data[5] = {0};
@@ -363,9 +372,9 @@ int llread(unsigned char *buf, int *packetSize)
     while (STOP == FALSE)
     {
         if (readByte == TRUE) {
-            printf("VOU FAZER READ\n");
+
             int bytes = read(fd, buffer, 1);
-            printf("JA FIZ READ %d\n", bytes);
+            
             if (bytes == -1 || bytes == 0) {
                 perror("Error reading from the serial port");
                 continue;
@@ -414,7 +423,7 @@ int llread(unsigned char *buf, int *packetSize)
 
     if (((frame[1] ^ frame[2]) != frame[3]) || (frame[2] != control)) {
         printf("Wrong frame received\n");
-        data[2] = (receiverNumber << 7) | 0x01;
+        data[2] = (numReceiver << 7) | 0x01;
         data[3] = (data[1] ^ data[2]);
         write(fd, data, 5);
         printf("RR sent\n");
@@ -429,43 +438,43 @@ int llread(unsigned char *buf, int *packetSize)
 
     for(int i = 0; i < infoSize; i++){
         if(frame[i] == 0x7D && frame[i+1]==0x5e){
-            buf[index++] = 0x7E;
+            packet[index++] = 0x7E;
             i++;
         }
 
         else if(frame[i] == 0x7D && frame[i+1]==0x5d){
-            buf[index++] = 0x7D;
+            packet[index++] = 0x7D;
             i++;
         }
 
-        else {buf[index++] = frame[i];}
+        else {packet[index++] = frame[i];}
     }
 
     int size = 0;
 
-    if(buf[4]==0x01){
-        size = 256*buf[6]+buf[7]+4 +6; //+4 para contar com os bytes de controlo, numero de seq e tamanho
+    if(packet[4]==0x01){
+        size = 256*packet[6]+packet[7]+4 +6; //+4 para contar com os bytes de controlo, numero de seq e tamanho
         for(int i=4; i<size-2; i++){
-            BCC2 = BCC2 ^ buf[i];
+            BCC2 = BCC2 ^ packet[i];
         }
     }
     
     else{
-        size += buf[6]+ 3 + 4; //+3 para contar com os bytes de C, T1 e L1 // +4 para contar com os bytes FLAG, A, C, BCC
-        size += buf[size+1] + 2 +2; //+2 para contar com T2 e L2 //+2 para contar com BCC2 e FLAG
+        size += packet[6]+ 3 + 4; //+3 para contar com os bytes de C, T1 e L1 // +4 para contar com os bytes FLAG, A, C, BCC
+        size += packet[size+1] + 2 +2; //+2 para contar com T2 e L2 //+2 para contar com BCC2 e FLAG
 
         for(int i=4; i<size-2; i++){
-            BCC2 = BCC2 ^ buf[i];
+            BCC2 = BCC2 ^ packet[i];
         }
     }
 
 
-    if(buf[size-2] == BCC2){
+    if(packet[size-2] == BCC2){
 
-        if(buf[4]==0x01){
+        if(packet[4]==0x01){
             if(frame[5] == lastFrameNumber){
                 printf("\nFrame received correctly. Repeated Frame. Sending RR.\n");
-                data[2] = (receiverNumber << 7) | 0x05;
+                data[2] = (numReceiver << 7) | 0x05;
                 data[3] = data[1] ^ data[2];
                 write(fd, data, 5);
                 return -1;
@@ -475,14 +484,14 @@ int llread(unsigned char *buf, int *packetSize)
             }
         }
         printf("\nFrame received correctly. Sending RR.\n");
-        data[2] = (receiverNumber << 7) | 0x05;
+        data[2] = (numReceiver << 7) | 0x05;
         data[3] = data[1] ^ data[2];
         write(fd, data, 5);
     }
     
     else {
         printf("\nInfoFrame not received correctly. Error in data packet. Sending REJ.\n");
-        data[2] = (receiverNumber << 7) | 0x01;
+        data[2] = (numReceiver << 7) | 0x01;
         data[3] = data[1] ^ data[2];
         write(fd, data, 5);
 
@@ -503,21 +512,21 @@ int llread(unsigned char *buf, int *packetSize)
     index = 0;
     
     for(int i=4; i<(*packetSize)-2; i++){
-        aux[index++] = buf[i];
+        aux[index++] = packet[i];
     }
 
     (*packetSize) = size - 6;
 
-    memset(buf,0,sizeof(buf));
+    memset(packet,0,sizeof(packet));
 
     for(int i=0; i<(*packetSize); i++){
-        buf[i] = aux[i];
+        packet[i] = aux[i];
     }
 
-    if(receiverNumber){
-        receiverNumber = 0;
+    if(numReceiver){
+        numReceiver = 0;
     }
-    else {receiverNumber = 1;}
+    else {numReceiver = 1;}
 
     return 1;
 }
@@ -533,7 +542,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
     printf("*************** CLOSE ***************\n");
     printf("*************************************\n");
 
-    if (connectionParameters.role == LlRx)
+    if (role == LlRx)
     {
         unsigned char buffer[6] = {0}, data[6] = {0};
         buffer[0] = 0x7E;
@@ -562,7 +571,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                 buffer[1] = 0x01;
                 buffer[3] = buffer[1]^buffer[2];
 
-                while(alarmCount < connectionParameters.nRetransmissions){
+                while(alarmCount < nRetransmissions){
 
                     if(!alarmEnabled){
                         printf("\nDISC message sent, %d bytes written\n", 5);
@@ -596,7 +605,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
                 }
 
-                if(alarmCount >= connectionParameters.nRetransmissions){
+                if(alarmCount >= nRetransmissions){
                     printf("\nAlarm limit reached, DISC message not sent\n");
                     return -1;
                 }
@@ -607,7 +616,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         
         }
     }
-    else if (connectionParameters.role == LlTx) {
+    else if (role == LlTx) {
 
         unsigned char buffer[6] = {0}, data[6] = {0};
         buffer[0] = 0x7E;
@@ -618,7 +627,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         buffer[5] = '\0'; //assim posso usar o strcmp
         alarmCount = 0;
 
-        while(alarmCount < connectionParameters.nRetransmissions){
+        while(alarmCount < nRetransmissions){
 
             if(!alarmEnabled){
                 
@@ -628,7 +637,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
                 if (alarmEnabled == FALSE)
                 {
-                    alarm(connectionParameters.timeout);
+                    alarm(timeout);
                     alarmEnabled = TRUE;
                 }
             }
@@ -669,7 +678,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
         }
 
-        if(alarmCount >= connectionParameters.nRetransmissions){
+        if(alarmCount >= nRetransmissions){
             printf("\nAlarm limit reached, DISC message not sent\n");
             close(fd);
             return -1;
