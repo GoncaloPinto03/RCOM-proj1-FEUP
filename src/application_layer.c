@@ -23,6 +23,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
         printf("This role is invalid\n");
         exit(-1);
     }
+
     LinkLayer lLayer;
     strcpy(lLayer.serialPort, serialPort);
     lLayer.role = lRole;
@@ -30,62 +31,57 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     lLayer.nRetransmissions = nTries;
     lLayer.timeout = timeout;
 
-    
-
     int fd = llopen(lLayer);
 
     clock_t start, end;
 
-    printf("SAIU DO LLOPEN\n");
     start = clock();
-    //segmento testado e funcional (a excecao de llwrite)
+
     if(lRole == LlTx){
-        printf("entrei neste if");
-        unsigned char packet[300], bytes[200], fileNotOver = 1;
-        int sizePacket = 0;
+
+        unsigned char packet[300];
+        unsigned char bytes[200];
+        unsigned char fileNotOver = 1;
+        int packetSize = 0;
        
+        FILE *file;
+        
+        int nBytes = 200;
+        int curByte = 0;
+        int index = 0;
+        int nSequence = 0;
+        
+        file = fopen(filename, "rb"); 
 
-        FILE *fileptr;
-        
-
-        int nBytes = 200, curByte=0, index=0, nSequence = 0;
-        
-        
-        fileptr = fopen(filename, "rb");        // Open the file in binary mode
-        if(fileptr == NULL){
-            printf("Couldn't find a file with that name, sorry :(\n");
+        if(file == NULL){
+            printf("Error opening the file!\n");
             return;
         }
         
+        packetSize = controlPacket(filename,1,&packet);
 
-
-        sizePacket = getControlPacket(filename,1,&packet);
-
-        printf("vem agora o if do llwrite\n");
-
-        if(llwrite(packet, sizePacket) == -1){
+        if(llwrite(packet, packetSize) == -1){
             return;
         }
-
 
         while(fileNotOver){
 
             //comeco por ler a file stream
             //se deixar de haver coisas para ler corro este codigo
-            if(!fread(&curByte, (size_t)1, (size_t) 1, fileptr)){
+            if(!fread(&curByte, (size_t)1, (size_t) 1, file)){
                 fileNotOver = 0;
-                sizePacket = getDataPacket(bytes, &packet, nSequence++, index);
+                packetSize = dataPacket(bytes, &packet, nSequence++, index);
 
-                if(llwrite(packet, sizePacket) == -1){
+                if(llwrite(packet, packetSize) == -1){
                     return;
                 }
             }
 
             //se o valor de index for igual a nBytes, significa que o ja passamos por nByte elementos
             else if(nBytes == index) {
-                sizePacket = getDataPacket(bytes, &packet, nSequence++, index);
+                packetSize = dataPacket(bytes, &packet, nSequence++, index);
 
-                if(llwrite(packet, sizePacket) == -1){
+                if(llwrite(packet, packetSize) == -1){
                     return;
                 }
 
@@ -97,24 +93,22 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             bytes[index++] = curByte;
         }
 
-        fclose(fileptr);
+        fclose(file);
 
-        sizePacket = getControlPacket(filename,0,&packet);
+        packetSize = controlPacket(filename,0,&packet);
 
-        if(llwrite(packet, sizePacket) == -1){
+        if(llwrite(packet, packetSize) == -1){
             return;
         }
 
     }
 
     else{
-        // 1º chamar llread
-        // 2º ler o packet do llread, se for um control packet START, criar um ficheiro novo, quando receber o close fecho o ficheiro que estou a escrever e paro de chamar llread, se for 0, prox iteraçao chamr llread de novo
-        // 3º escrever os dataPacket no ficheiro que criei
-        FILE *fileptr;
+        // llread
+        // ler o packet do llread, se for um control packet START, criar um ficheiro novo, quando receber o close fecho o ficheiro que estou a escrever e paro de chamar llread, se for 0, prox iteraçao chamr llread de novo
+        // escrever os dataPacket no ficheiro que criei
+        FILE *file;
         char readBytes = 1;
-        
-        
 
         while(readBytes){
         
@@ -122,23 +116,22 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
             int sizeOfPacket = 0, index = 0;
             
             
-            if(llread(&packet, &sizeOfPacket)==-1){
+            if(llread(&packet, &sizeOfPacket) == -1){
                 continue;
             }
            
-            
             if(packet[0] == 0x03){
                 printf("\nClosed penguin\n");
-                fclose(fileptr);
+                fclose(file);
                 readBytes = 0;
             }
-            else if(packet[0]==0x02){
+            else if(packet[0] == 0x02){
                 printf("\nOpened penguin\n");
-                fileptr = fopen(filename, "wb");   
+                file = fopen(filename, "wb");   
             }
             else{
-                for(int i=4; i<sizeOfPacket; i++){
-                    fputc(packet[i], fileptr);
+                for(int i = 4; i < sizeOfPacket; i++){
+                    fputc(packet[i], file);
                 }
             }
         }
@@ -148,12 +141,11 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
 
     llclose(&stats, lLayer, duration);
     
-    
     return;
 
 }
 
-int getControlPacket(char* filename, int start, unsigned char* packet){
+int controlPacket(char* filename, int start, unsigned char* packet){
 
     int sizeOfPacket = 0;
 
@@ -184,7 +176,7 @@ int getControlPacket(char* filename, int start, unsigned char* packet){
         packet[0] = 0x03;
     }
 
-    packet[1] = 0x00; // 0 = tamanho do ficheiro 
+    packet[1] = 0x00; // tamanho do ficheiro é 0 
     packet[2] = fileSizeBytes;
 
 
@@ -207,8 +199,7 @@ int getControlPacket(char* filename, int start, unsigned char* packet){
 }
 
 
-/*Funcao testada e funcional*/
-int getDataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, int nBytes){
+int dataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, int nBytes){
 
 	int l2 = div(nBytes, 256).quot , l1 = div(nBytes, 256).rem;
 
@@ -217,10 +208,10 @@ int getDataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, in
     packet[2] = l2;
     packet[3] = l1;
 
-    for(int i=0; i<nBytes; i++){
+    for(int i=0; i < nBytes; i++){
         packet[i+4] = bytes[i];
     }
 
-	return (nBytes+4); //tamanho do data packet
+	return (nBytes + 4); //tamanho data packet
 
 }

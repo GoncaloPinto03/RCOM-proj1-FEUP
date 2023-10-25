@@ -319,9 +319,9 @@ int llwrite(const unsigned char *buf, int bufSize)
         }
 
         // Lidar com resposta do recetor
-        int result = read(fd, data, 5);
+        int final_res = read(fd, data, 5);
         
-        if(result != -1 && data != 0){
+        if(final_res != -1 && data != 0){
             //verificar variavel control da resposta com a trama enviada
             //verificar address_sender^bcc da resposta com a da trama
             if(data[2] != (ctrl) || (data[3] != (data[1]^data[2]))){
@@ -452,7 +452,7 @@ int llread(unsigned char *packet, int *packetSize)
 
 
     for(int i = 0; i < infoSize; i++){
-        if(frame[i] == 0x7D && frame[i+1]==0x5e){
+        if(frame[i] == 0x7D && frame[i+1] == 0x5e){
             packet[index++] = 0x7E;
             i++;
         }
@@ -469,18 +469,18 @@ int llread(unsigned char *packet, int *packetSize)
 
     int size = 0;
 
-    if(packet[4]==0x01){
-        size = 256*packet[6]+packet[7]+4 +6; //+4 para contar com os bytes de controlo, numero de seq e tamanho
+    if(packet[4] == 0x01){
+        size = 256 * packet[6] + packet[7] + 4 + 6; //4 ->  bytes ctrl, numero de seq e tamanho
         for(int i=4; i<size-2; i++){
             BCC2 = BCC2 ^ packet[i];
         }
     }
     
     else{
-        size += packet[6]+ 3 + 4; //+3 para contar com os bytes de C, T1 e L1 // +4 para contar com os bytes FLAG, A, C, BCC
-        size += packet[size+1] + 2 +2; //+2 para contar com T2 e L2 //+2 para contar com BCC2 e FLAG
+        size += packet[6] + 3 + 4; //  3 -> bytes C, T1, L1, 4 -> bytes flag, a, c, bcc
+        size += packet[size+1] + 2 + 2; //2 -> bytes T2, L2, 2 -> bytes bcc2, flag
 
-        for(int i=4; i<size-2; i++){
+        for(int i = 4; i < size-2; i++){
             BCC2 = BCC2 ^ packet[i];
         }
     }
@@ -488,7 +488,7 @@ int llread(unsigned char *packet, int *packetSize)
 
     if(packet[size-2] == BCC2){
 
-        if(packet[4]==0x01){
+        if(packet[4] == 0x01){
             if(frame[5] == numLastFrame){
                 printf("\nFrame received correctly. Repeated Frame. RR sent.\n");
                 data[2] = C_RR(numReceiver);
@@ -519,7 +519,7 @@ int llread(unsigned char *packet, int *packetSize)
 
     index = 0;
     
-    for(int i=4; i<(*packetSize)-2; i++){
+    for(int i = 4; i < (*packetSize)-2; i++){
         aux[index++] = packet[i];
     }
 
@@ -564,14 +564,14 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         unsigned char STOP = FALSE, UA = FALSE;
 
         while(!STOP){
-            int result = read(fd, data, 5);
-            
-            data[5] = '\0';
 
-            if(result==-1){
+            data[5] = '\0';
+            
+            int final_res = read(fd, data, 5);
+
+            if(final_res == -1){
                 continue;
             }
-
 
             else if(strcasecmp(buffer, data) == 0){
                 printf("\nDISC message received. Responding now.\n");
@@ -594,8 +594,9 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                         }
                     }
                     
-                    int result = read(fd, data, 5);
-                    if( data != 0 && result != -1 && data[0]==0x7E){
+                    int final_res = read(fd, data, 5);
+
+                    if( data != 0 && final_res != -1 && data[0]==0x7E){
                         //se o UA estiver errado 
                         if(data[2] != 0x07 || (data[3] != (data[1]^data[2]))){
                             printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
@@ -632,7 +633,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         buffer[2] = 0x0B;
         buffer[3] = buffer[1]^buffer[2];
         buffer[4] = 0x7E;
-        buffer[5] = '\0'; //assim posso usar o strcmp
+        buffer[5] = '\0';
         alarmCount = 0;
 
         while(alarmCount < nRetransmissions){
@@ -649,16 +650,14 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                     alarmEnabled = TRUE;
                 }
             }
-
-            //sleep(2);
             
-            int result = read(fd, data, 5);
+            int final_res = read(fd, data, 5);
 
             buffer[1] = 0x01;
             buffer[3] = buffer[1]^buffer[2];
             data[5] = '\0';
 
-            if(result != -1 && data != 0 && data[0]==0x7E){
+            if(final_res != -1 && data != 0 && data[0]==0x7E){
                 //se o DISC estiver errado 
                 if(strcasecmp(buffer, data) != 0){
                     printf("\nDISC not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
@@ -697,7 +696,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         printf("*************************************\n");
         printf("*************** STATS ***************\n");
         printf("*************************************\n");
-        printf("\nNumber of packets sent: %d\nSize of data packets in information frame: %d\nTotal run time: %f\nAverage time per packet: %f\n", numLastFrame, 200, runTime, runTime/200.0);
+        printf("\nSent %d Packets\nRun time: %f\nData Packets size in frame: %d\nAverage time per packet: %f\n", numLastFrame, runTime, 200, runTime/200.0);
 
     }
 

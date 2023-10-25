@@ -15,8 +15,8 @@
 void applicationLayer(const char *serialPort, const char *role, int baudRate,
                       int nTries, int timeout, const char *filename);
 
-int getControlPacket(char* filename, int start, unsigned char* packet);
+int controlPacket(char* filename, int start, unsigned char* packet);
 
-int getDataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, int nBytes);
+int dataPacket(unsigned char* bytes, unsigned char* packet, int nSequence, int nBytes);
 
 #endif // _APPLICATION_LAYER_H_
