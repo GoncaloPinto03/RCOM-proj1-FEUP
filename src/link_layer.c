@@ -9,7 +9,7 @@ int alarmEnabled = FALSE;
 int alarmCount = 0;
 int numSender = 0;
 int numReceiver = 1;
-int lastFrameNumber = -1;
+int numLastFrame = -1;
 
 int fd = -1;
 int timeout = -1;
@@ -240,6 +240,7 @@ int llopen(LinkLayer connectionParameters)
     return 1;
 }
 
+
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
@@ -252,19 +253,20 @@ int llwrite(const unsigned char *buf, int bufSize)
     alarmCount = 0;
     int STOP = 0;
     int index = 4;
-    int control = (!numSender << 7) | 0x05; //7 bits menos significativos sao preenchidos com 0, e os 25 bits mais significativos sao preenchidos com o resultado do deslocamento
-    unsigned char BCC = 0x00;
+    int ctrl = (!numSender << 7) | 0x05; // 7 bits menos significativos sao preenchidos com 0, e os 25 bits mais significativos sao preenchidos com o resultado do deslocamento
+    unsigned char BCC = 0x00; 
     unsigned char buffer[MAX_FRAME_SIZE]={0};
     unsigned char data[5] = {0};
 
-    //BCC destuffing
+    // byte destuffing
     for(int i = 0; i < bufSize; i++){
         BCC = (BCC ^ buf[i]);
     }
     buffer[0] = FLAG;
     buffer[1] = ASR;
-    buffer[2] = (numSender << 6);
+    buffer[2] = C_N(numSender);
     buffer[3] = buffer[1] ^ buffer[2];
+
 
     for(int i = 0; i < bufSize; i++){
         if(buf[i] == FLAG){
@@ -288,7 +290,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     Isto evita que ESC e FLAG sejam mal interpretados como inicio ou fim de trama/quadro de dados 
     */
     if(BCC == ESC){
-        // ESC é usado como um indicador de que o próximo caractere não deve ser interpretado como dado, mas sim como um caractere de controle
+        // ESC é usado como um indicador de que o próximo caracter não deve ser interpretado como dado, mas sim como um caracter de controlo
         buffer[index++] = ESC;
         buffer[index++] = 0x5D;
     }
@@ -303,7 +305,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     buffer[index++] = FLAG;
 
     while(!STOP){
-        if(!alarmEnabled){
+        if(alarmEnabled == FALSE){
             write(fd, buffer, index);
             printf("Frame sent NS=%d\n", numSender);
 
@@ -316,14 +318,13 @@ int llwrite(const unsigned char *buf, int bufSize)
 
         }
 
-        
-        //Lidar com resposta do recetor
+        // Lidar com resposta do recetor
         int result = read(fd, data, 5);
         
         if(result != -1 && data != 0){
             //verificar variavel control da resposta com a trama enviada
             //verificar address_sender^bcc da resposta com a da trama
-            if(data[2] != (control) || (data[3] != (data[1]^data[2]))){
+            if(data[2] != (ctrl) || (data[3] != (data[1]^data[2]))){
                 printf("Wrong RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
                 continue;
@@ -364,7 +365,7 @@ int llread(unsigned char *packet, int *packetSize)
 
     alarmCount = 0;
     int index = 0;
-    int control = (!numReceiver << 6);
+    int ctrl = (!numReceiver << 6);
     unsigned char BCC2 = 0x00;
     unsigned char frame[MAX_FRAME_SIZE]={0};
     unsigned char data[5] = {0};
@@ -383,7 +384,7 @@ int llread(unsigned char *packet, int *packetSize)
     {
         if (readByte == TRUE) {
 
-            int bytes = read(fd, buffer, 1);
+            int bytes = read(fd, buffer, 1); // ler um byte de cada vez
             
             if (bytes == -1 || bytes == 0) {
                 perror("Error reading from the serial port");
@@ -401,11 +402,14 @@ int llread(unsigned char *packet, int *packetSize)
             break;
         
         case FLAG_RCV:
+            // visto que acabamos de ler uma flag não podemos ler outra, senão já estariamos na proxima trama ({FLAG,A,C,BCC,FLAG}, {FLAG,A,C,BCC,FLAG})
             if (buffer[0] != FLAG) {
                 state = A_RCV;
                 frame[infoSize++] = buffer[0];
             }
+            // se lermos outra flag ent esta nova passa a ser o inicio da trama, logo continuamos neste estado à espera de algo diferente da flag
             else if (buffer[0] == FLAG) {
+                memset(frame, 0, MAX_FRAME_SIZE);
                 state = FLAG_RCV;
                 infoSize = 0;
                 frame[infoSize++] = buffer[0];
@@ -413,6 +417,7 @@ int llread(unsigned char *packet, int *packetSize)
             break;
         
         case A_RCV:
+            // continuamos até receber uma flag
             if (buffer[0] != FLAG) {
                 frame[infoSize++] = buffer[0];
             }
@@ -425,15 +430,15 @@ int llread(unsigned char *packet, int *packetSize)
         default:
             break;
         }   
+    }
 
     data[0] = FLAG;
     data[1] = ASR;
     data[4] = FLAG;
-    }
 
-    if (((frame[1] ^ frame[2]) != frame[3]) || (frame[2] != control)) {
+    if (((frame[1] ^ frame[2]) != frame[3]) || (frame[2] != ctrl)) {
         printf("Wrong frame received\n");
-        data[2] = (numReceiver << 7) | 0x01;
+        data[2] = C_REJ(numReceiver);
         data[3] = (data[1] ^ data[2]);
         write(fd, data, 5);
         printf("RR sent\n");
@@ -457,7 +462,9 @@ int llread(unsigned char *packet, int *packetSize)
             i++;
         }
 
-        else {packet[index++] = frame[i];}
+        else {
+            packet[index++] = frame[i];
+        }
     }
 
     int size = 0;
@@ -482,37 +489,28 @@ int llread(unsigned char *packet, int *packetSize)
     if(packet[size-2] == BCC2){
 
         if(packet[4]==0x01){
-            if(frame[5] == lastFrameNumber){
-                printf("\nFrame received correctly. Repeated Frame. Sending RR.\n");
-                data[2] = (numReceiver << 7) | 0x05;
+            if(frame[5] == numLastFrame){
+                printf("\nFrame received correctly. Repeated Frame. RR sent.\n");
+                data[2] = C_RR(numReceiver);
                 data[3] = data[1] ^ data[2];
                 write(fd, data, 5);
                 return -1;
             }   
             else{
-                lastFrameNumber = frame[5];
+                numLastFrame = frame[5];
             }
         }
-        printf("\nFrame received correctly. Sending RR.\n");
-        data[2] = (numReceiver << 7) | 0x05;
+        printf("\nFrame received correctly. RR sent.\n");
+        data[2] = C_RR(numReceiver);
         data[3] = data[1] ^ data[2];
         write(fd, data, 5);
     }
     
     else {
-        printf("\nInfoFrame not received correctly. Error in data packet. Sending REJ.\n");
-        data[2] = (numReceiver << 7) | 0x01;
+        printf("\nERROR - Not received the frame correctly. REJ sent.\n");
+        data[2] = C_REJ(numReceiver);
         data[3] = data[1] ^ data[2];
         write(fd, data, 5);
-
-        /*printf("\n-----REJ-----\n");
-        printf("\nSize of REJ: %d\nREJ: 0x", 5);
-
-        for(int i=0; i<5; i++){
-            printf("%02X ", supFrame[i]);
-        }
-
-        printf("\n\n");*/
 
         return -1;
     }
@@ -699,7 +697,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
         printf("*************************************\n");
         printf("*************** STATS ***************\n");
         printf("*************************************\n");
-        printf("\nNumber of packets sent: %d\nSize of data packets in information frame: %d\nTotal run time: %f\nAverage time per packet: %f\n", lastFrameNumber, 200, runTime, runTime/200.0);
+        printf("\nNumber of packets sent: %d\nSize of data packets in information frame: %d\nTotal run time: %f\nAverage time per packet: %f\n", numLastFrame, 200, runTime, runTime/200.0);
 
     }
 
