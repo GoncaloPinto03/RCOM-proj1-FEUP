@@ -21,13 +21,13 @@
 #define C_DISC 0x0B
 #define ESC 0x7D
 
-#define C_RR(Nr) ((Nr << 7) | 0x05)
-#define C_REJ(Nr) ((Nr << 7) | 0x01)
-#define C_N(Ns) (Ns << 6)
+#define C_RR(numReceiver) ((numReceiver << 7) | 0x05)
+#define C_REJ(numReceiver) ((numReceiver << 7) | 0x01)
+#define C_N(numSender) (numSender << 6)
 
 #define BAUDRATE 38400
 
-#define MAX_FRAME_SIZE 600
+#define MAX_FRAME_SIZE 256
 #define ACK 0x06 // ACK character (hex value 06)
 #define HEADER_SIZE 4 // Assuming a 4-byte headers
 #define SIGALRM 14
