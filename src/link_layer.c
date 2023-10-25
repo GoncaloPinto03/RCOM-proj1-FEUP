@@ -202,7 +202,7 @@ int llopen(LinkLayer connectionParameters)
             if (alarmEnabled == FALSE) {
 
                 int bytes = write(fd, buffer, sizeof(buffer));
-                printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
+                //printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
                 
                 (void)signal(SIGALRM, alarmHandler);
                 if (alarmEnabled == FALSE) {
@@ -215,14 +215,14 @@ int llopen(LinkLayer connectionParameters)
             if (res > 0 && data != 0 && data[0] == FLAG) {
                 
                 if (data[2] == CUA || data[3] == (data[1] ^ data[2])) {
-                    printf("CORRECT UA\n");
-                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    //printf("CORRECT UA\n");
+                    //printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
                     break;
                 }
                 else {
-                    printf("WRONG UA\n");
-                    printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    //printf("WRONG UA\n");
+                    //printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
                     continue;
                 }
@@ -307,7 +307,7 @@ int llwrite(const unsigned char *buf, int bufSize)
     while(!STOP){
         if(alarmEnabled == FALSE){
             write(fd, buffer, index);
-            printf("Frame sent NS=%d\n", numSender);
+            //printf("Frame sent NS=%d\n", numSender);
 
             (void)signal(SIGALRM, alarmHandler);
             if (alarmEnabled == FALSE)
@@ -325,12 +325,12 @@ int llwrite(const unsigned char *buf, int bufSize)
             //verificar variavel control da resposta com a trama enviada
             //verificar address_sender^bcc da resposta com a da trama
             if(data[2] != (ctrl) || (data[3] != (data[1]^data[2]))){
-                printf("Wrong RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                //printf("Wrong RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
                 continue;
             }
             else{
-                printf("Correct RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                //printf("Correct RR: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                 alarmEnabled=FALSE;
                 STOP = 1;
             }
