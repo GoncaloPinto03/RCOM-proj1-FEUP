@@ -32,7 +32,10 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate,
     lLayer.timeout = timeout;
 
     int fd = llopen(lLayer);
-
+    if(fd==-1){
+        printf("Error establishing connection SET/UA\n");
+        return;
+    }
     clock_t start, end;
 
     start = clock();
