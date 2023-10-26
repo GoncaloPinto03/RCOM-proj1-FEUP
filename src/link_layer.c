@@ -569,12 +569,12 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
         unsigned char STOP = FALSE, UA = FALSE;
         while(!STOP){
-            data[5] = '\0';
             int final_res = read(fd, data, 5);
+            data[5] = '\0';
             if(final_res == -1){
                 continue;
 
-            }else if(strcasecmp(buffer, data) == 0){
+            }else {
                 printf("\nDISC message received. Responding now.\n");
                 buffer[1] = 0x01;
                 buffer[3] = buffer[1]^buffer[2];
@@ -596,12 +596,12 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                     if( data != 0 && final_res != -1 && data[0]==0x7E){
                         //se o UA estiver errado 
                         if(data[2] != 0x07 || (data[3] != (data[1]^data[2]))){
-                            printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                            //printf("\nUA not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                             alarmEnabled = FALSE;
                             continue;
                         }
                         else{   
-                            printf("\nUA correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                            //printf("\nUA correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                             alarmEnabled = FALSE;
                             close(fd);
                             break;
@@ -626,7 +626,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
 
         alarmCount = 0;
 
-        while(alarmCount < nRetransmissions){
+        while(alarmCount < 3){
             if(!alarmEnabled){
                 int bytes = write(fd, buffer, 5);
                 printf("\nDISC message sent, %d bytes written\n", bytes);
@@ -647,11 +647,11 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
             if(final_res != -1 && data != 0 && data[0]==0x7E){
                 //se o DISC estiver errado 
                 if(strcasecmp(buffer, data) != 0){
-                    printf("\nDISC not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    //printf("\nDISC not correct: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
                     continue;
                 }else{   
-                    printf("\nDISC correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
+                    //printf("\nDISC correctly received: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
                     buffer[1] = 0x01;
                     buffer[2] = 0x07;
@@ -660,7 +660,7 @@ int llclose(int showStatistics, LinkLayer connectionParameters, float runTime) {
                     int bytes = write(fd, buffer, 5);
                     close(fd);
 
-                    printf("\nUA message sent, %d bytes written.\n\nI'm shutting off now, bye bye!\n", bytes);
+                    //printf("\nUA message sent, %d bytes written.\n\nI'm shutting off now, bye bye!\n", bytes);
                     return 1;
                 }
             }
