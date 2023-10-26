@@ -228,12 +228,7 @@ int llopen(LinkLayer connectionParameters)
                 
                 printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
                 
-                (void)signal(SIGALRM, alarmHandler);
-                if (alarmEnabled == FALSE)
-                {
-                    alarm(timeout);
-                    alarmEnabled = TRUE;
-                }
+                alarmRun(3);
             }
 
             int res = read(fd, data, 5);
@@ -243,7 +238,8 @@ int llopen(LinkLayer connectionParameters)
                 if (data[2] == CUA && (data[3] == (data[1] ^ data[2]))) {
                     //printf("CORRECT UA\n");
                     //printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
-                    alarmEnabled = FALSE;
+                    alarmEnabled = TRUE;
+                    alarmCount = nRetransmissions;
                     break;
                 }
                 else {
