@@ -227,9 +227,10 @@ int llopen(LinkLayer connectionParameters)
 	    alarmCount = 0;
 
         while (alarmCount < 3) {
-            if (alarmEnabled == FALSE) {
-                int bytes = write(fd, buffer, sizeof(buffer));
-                printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
+            int bytes = write(fd, buffer, sizeof(buffer));
+            printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes); 
+            
+            if (alarmEnabled == FALSE) {               
                 (void)signal(SIGALRM, alarmHandler);
                 alarm(timeout);
 		        alarmEnabled = TRUE;
