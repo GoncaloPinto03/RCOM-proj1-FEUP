@@ -71,6 +71,8 @@ typedef enum
 // Alarm function handler.
 void alarmHandler(int signal);
 
+int alarmRun(int timeout);
+
 // Inits a connection using the "port" parameters defined in struct linkLayer.
 // Return fd value on success or "-1" on error.
 int llinit(LinkLayer connectionParameters);

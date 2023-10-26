@@ -7,14 +7,17 @@
 
 int alarmEnabled = FALSE;
 int alarmCount = 0;
+
 int numSender = 0;
 int numReceiver = 1;
+
 int numLastFrame = -1;
 
 int fd = -1;
 int timeout = -1;
 int baudRate = -1;
 int nRetransmissions = -1;
+
 LinkLayerRole role;
 
 ////////////////////////////////////////////////
@@ -24,9 +27,23 @@ void alarmHandler(int signal)
 {
     alarmEnabled = FALSE;
     alarmCount++;
-
     printf("Alarm #%d\n", alarmCount);
 }
+
+////////////////////////////////////////////////
+// RUN ALARM 
+////////////////////////////////////////////////
+int alarmRun(int timeout)
+{
+    (void)signal(SIGALRM, alarmHandler);
+    if (alarmEnabled == FALSE)
+    {
+        alarm(timeout);
+        alarmEnabled = TRUE;
+    }
+    return 0;
+}
+
 
 ////////////////////////////////////////////////
 // INIT
@@ -37,13 +54,14 @@ int llinit(LinkLayer connectionParameters) {
     // because we don't want to get killed if linenoise sends CTRL-C.
     fd = open(connectionParameters.serialPort, O_RDWR | O_NOCTTY | O_NONBLOCK);
     
+    alarmCount = 0;
     if (fd < 0)
     {
         perror(connectionParameters.serialPort);
         exit(-1);
     }
 
-    unsigned char byte;
+    //unsigned char byte;
 
     struct termios oldtio;
     struct termios newtio;
@@ -95,6 +113,7 @@ int llopen(LinkLayer connectionParameters)
     printf("*************************************\n");
     printf("**************** OPEN ***************\n");
     printf("*************************************\n");
+
     LinkLayerStateMachine state = START;
     
     nRetransmissions = connectionParameters.nRetransmissions;
@@ -112,72 +131,76 @@ int llopen(LinkLayer connectionParameters)
 
     if (connectionParameters.role == LlRx) {
 
-        unsigned char buffer;
+        unsigned char buffer[1] = {0};
         unsigned char data[5] = {0}; // +1: Save space for the final '\0' char
         
         unsigned char readByte = TRUE;
+        state = START;
 
         while(stop == FALSE) 
         {
             if (readByte == TRUE) {
-                if (read(fd, &buffer, 1) < 1) continue;
+                int bytes = read(fd, &buffer, 1);
+                if (bytes == 0 || bytes == -1) {
+                    continue;
+                }
             }   
             switch (state)
             {
                 case START:
-                    if (buffer == FLAG) {
+                    if (buffer[0] == FLAG) {
                         state = FLAG_RCV;
-                        data[0] = buffer;
+                        data[0] = buffer[0];
                     }
                     break;
                 case FLAG_RCV:
-                    if (buffer != FLAG) {
+                    if (buffer[0] != FLAG) {
                         state = A_RCV;
-                        data[1] = buffer;
+                        data[1] = buffer[0];
                     }
-                    else if (buffer == FLAG){ 
+                    else if (buffer[0]== FLAG){ 
                         state = START;
-                        memset(data, 0, sizeof(data));
+                        memset(data, 0, 5);
                     }
                     break;
                 case A_RCV:
-                    if (buffer != FLAG) {
+                    if (buffer[0] != FLAG) {
                         state = C_RCV;
-                        data[2] = buffer;
+                        data[2] = buffer[0];
                     }
-                    else if (buffer == FLAG) {
+                    else if (buffer[0] == FLAG) {
                         state = START;
-                        memset(data, 0, sizeof(data));
+                        memset(data, 0, 5);
                     }
                     break;
                 case C_RCV:
-                    if (buffer != FLAG) {
+                    if (buffer[0] != FLAG) {
                         state = BCC_OK;
-                        data[3] = buffer;
+                        data[3] = buffer[0];
                     }
-                    else if (buffer == FLAG) {
+                    else if (buffer[0] == FLAG) {
                         state = START;
-                        memset(data, 0, sizeof(data));
+                        memset(data, 0, 5);
                     }
                     break;
                 case BCC_OK:
-                    if (buffer != FLAG) {
+                    if (buffer[0] != FLAG) {
                         state = STOP;
-                        data[4] = buffer;
+                        data[4] = buffer[0];
                     }
-                    else if (buffer == FLAG){
+                    else if (buffer[0] == FLAG){
                         state = START;
-                        memset(data, 0, sizeof(data));
+                        memset(data, 0, 5);
                     }
                     break;
                 case STOP:
                     if ((data[1] ^ data[2]) == data[3]) {
-                        printf("Connection established\n");
+                        printf("Rceived SET message!\n");
                         stop = TRUE;
                     }
                     else {
                         state = START;
-                        memset(data, 0, sizeof(data));
+                        memset(data, 0, 5);
                         readByte = TRUE;
                     }
                     break;
@@ -202,19 +225,22 @@ int llopen(LinkLayer connectionParameters)
             if (alarmEnabled == FALSE) {
 
                 int bytes = write(fd, buffer, sizeof(buffer));
-                //printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
+                
+                printf("SET MESSAGE ---> %d BYTES WRITTEN\n", bytes);                
                 
                 (void)signal(SIGALRM, alarmHandler);
-                if (alarmEnabled == FALSE) {
+                if (alarmEnabled == FALSE)
+                {
                     alarm(timeout);
                     alarmEnabled = TRUE;
                 }
             }
 
-            int res = read(fd, data, sizeof(data));
-            if (res > 0 && data != 0 && data[0] == FLAG) {
+            int res = read(fd, data, 5);
+
+            if (res != -1 && data != 0 && data[0] == FLAG) {
                 
-                if (data[2] == CUA || data[3] == (data[1] ^ data[2])) {
+                if (data[2] == CUA && (data[3] == (data[1] ^ data[2]))) {
                     //printf("CORRECT UA\n");
                     //printf("UA: 0x%02x%02x%02x%02x%02x\n", data[0], data[1], data[2], data[3], data[4]);
                     alarmEnabled = FALSE;
